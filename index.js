@@ -11,6 +11,11 @@ var net = require("net");
 var LineInputStream = require("line-input-stream");
 var events = require("events");
 var util = require("util");
+function extendPrototype(child, parent) {
+    for (i in parent.prototype) {
+        child.prototype[i] = parent.prototype[i];
+    }
+}
 
 var TeamSpeakClient = function(host, port) {
     events.EventEmitter.call(this);
@@ -21,7 +26,9 @@ var TeamSpeakClient = function(host, port) {
     this.status = -2;
     this.queue = [];
     this.executing = null;
+    this.init();
 };
+module.exports = TeamSpeakClient;
 
 TeamSpeakClient.prototype = {
     init: function() {
@@ -33,7 +40,7 @@ TeamSpeakClient.prototype = {
             self.emit("close", self.queue);
         });
 
-        this.socket.on("connect", this.processResponse);
+        this.socket.on("connect", this.processResponse.bind(this));
     },
 
     tsescape: function(s) {
@@ -72,16 +79,18 @@ TeamSpeakClient.prototype = {
     },
 
     parseResponse: function(s) {
+        var self = this;
         var response = [];
         var records = s.split("|");
 
-        response = records.map(function(k){
+        response = records.map(function(k) {
             var args = k.split(" ");
             var thisrec = {};
-            args.forEach(function(v){
-                if (v.indexOf("=") > -1){
-                    var key = this.tsunescape(v.substr(0, v.indexOf("=")));
-                    var value = this.tsunescape(v.substr(v.indexOf("=") + 1));
+            args.forEach(function(v) {
+                var equalsPos = v.indexOf("=");
+                if (equalsPos > -1){
+                    var key = self.tsunescape(v.substr(0, equalsPos));
+                    var value = self.tsunescape(v.substr(equalsPos + 1));
                     if (parseInt(value, 10) == value) {
                         value = parseInt(value, 10);
                     }
@@ -142,7 +151,8 @@ TeamSpeakClient.prototype = {
     },
 
     processResponse: function() {
-        this.reader = LineInputStream(this.socket);
+        var self = this;
+        this.reader = LineInputStream(self.socket);
         this.reader.on("line", function(line) {
             var s = line.trim();
             // Ignore two first lines sent by server ("TS3" and information message)
@@ -158,29 +168,28 @@ TeamSpeakClient.prototype = {
             // - "error id=XX msg=YY". ID is zero if command was executed successfully.
             var response = undefined;
             if (s.indexOf("error") === 0) {
-                response = self.parseResponse(s.substr("error ".length).trim());
+                response = self.parseResponse.call(self, s.substr("error ".length).trim());
                 self.executing.error = response;
                 if (self.executing.error.id === "0") {
                     delete self.executing.error;
                 }
                 if (self.executing.cb) {
                     self.executing.cb.call(self.executing, self.executing.error, self.executing.response, self.executing.rawResponse, self.executing.cbparams);
-                    self.executing = null;
-                    self.checkQueue();
-                } else if (s.indexOf("notify") === 0) {
-                    s = s.substr("notify".length);
-                    response = self.parseResponse(s);
-                    self.emit(s.substr(0, s.indexOf(" ")), response);
-                } else if (self.executing) {
-                    response = self.parseResponse(s);
-                    self.executing.rawResponse = s;
-                    self.executing.response = response;
                 }
+                self.executing = null;
+                self.checkQueue();
+            } else if (s.indexOf("notify") === 0) {
+                s = s.substr("notify".length);
+                response = self.parseResponse.call(self, s);
+                self.emit(s.substr(0, s.indexOf(" ")), response);
+            } else if (self.executing) {
+                response = self.parseResponse.call(self, s);
+                self.executing.rawResponse = s;
+                self.executing.response = response;
             }
             self.emit("connect");
         });
     }
 };
 
-util.inherits(TeamSpeakClient, events.EventEmitter);
-module.exports = TeamSpeakClient;
+extendPrototype(TeamSpeakClient, events.EventEmitter);
