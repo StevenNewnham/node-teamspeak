@@ -179,7 +179,7 @@ TeamSpeakClient.prototype = {
 			}
 		});
 		self.emit("connect");
-	}); 
+	}
 }
 
 util.inherits(TeamSpeakClient, events.EventEmitter);
