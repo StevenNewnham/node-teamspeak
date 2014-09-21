@@ -21,11 +21,10 @@ var TeamSpeakClient = function(host, port) {
     this.status = -2;
     this.queue = [];
     this.executing = null;
-    this.initSocket();
 };
 
 TeamSpeakClient.prototype = {
-    initSocket: function() {
+    init: function() {
         this.socket.on("error", function(err) {
             self.emit("error", err);
         });
