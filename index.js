@@ -140,7 +140,7 @@ TeamSpeakClient.prototype = {
                     return self.tsescape(k) + "=" + self.tsescape(val);
                 });
                 tosend += " " + doptions.join("|");
-            } else {
+            } else if (v !== null) {
                 tosend += " " + this.tsescape(k.toString()) + "=" + this.tsescape(v.toString());
             }
         }
