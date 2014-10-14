@@ -7,43 +7,41 @@
  * ----------------------------------------------------------------------------
  */
 
-var net = require("net");
-var LineInputStream = require("line-input-stream");
-var events = require("events");
-var util = require("util");
-function extendPrototype(child, parent) {
-    for (i in parent.prototype) {
-        child.prototype[i] = parent.prototype[i];
-    }
-}
+var net = require("net"),
+    LineInputStream = require("line-input-stream"),
+    events = require("events"),
+    util = require("util");
+
 
 var TeamSpeakClient = function(host, port) {
-    events.EventEmitter.call(this);
 
-    var self = this;
-    this.socket = net.connect(port || 10011, host || 'localhost');
-    this.reader = null;
-    this.status = -2;
-    this.queue = [];
-    this.executing = null;
-    this.init();
-};
-module.exports = TeamSpeakClient;
+    // Private members and methods - Can ONLY be created within the constructor
 
-TeamSpeakClient.prototype = {
-    init: function() {
-        this.socket.on("error", function(err) {
+    var self = this,
+        socket = net.Socket(),
+        reader = null,
+        status = -2,
+        queue = [],
+        executing = null;
+
+
+    function init() {
+        events.EventEmitter.call(this);
+        socket.on("error", function(err) {
             self.emit("error", err);
         });
 
-        this.socket.on("close", function() {
-            self.emit("close", self.queue);
+        socket.on("close", function() {
+            self.emit("close", queue);
         });
 
-        this.socket.on("connect", this.processResponse.bind(this));
-    },
+        socket.on("connect", processResponse);
 
-    tsescape: function(s) {
+        socket.connect(port || 10011, host || 'localhost');
+    };
+
+
+    function tsescape(s) {
         var r = String(s);
         r = r.replace(/\\/g, "\\\\");   // Backslash
         r = r.replace(/\//g, "\\/");    // Slash
@@ -55,9 +53,10 @@ TeamSpeakClient.prototype = {
         r = r.replace(/\f/g, "\\f");    // Formfeed
         r = r.replace(/ /g,  "\\s");    // Whitespace
         return r;
-    },
+    };
 
-    tsunescape: function(s) {
+
+    function tsunescape(s) {
         var r = String(s);
         r = r.replace(/\\s/g,  " ");    // Whitespace
         r = r.replace(/\\p/g,  "|");    // Pipe
@@ -69,17 +68,18 @@ TeamSpeakClient.prototype = {
         r = r.replace(/\\\//g, "\/");   // Slash
         r = r.replace(/\\\\/g, "\\");   // Backslash
         return r;
-    },
+    };
 
-    checkQueue: function() {
-        if (!this.executing && this.queue.length >= 1) {
-            this.executing = this.queue.shift();
-            this.socket.write(this.executing.text + "\n");
+
+    function checkQueue() {
+        if (!executing && queue.length >= 1) {
+            executing = queue.shift();
+            socket.write(executing.text + "\n");
         }
-    },
+    };
 
-    parseResponse: function(s) {
-        var self = this;
+
+    function parseResponse(s) {
         var response = [];
         var records = s.split("|");
 
@@ -89,8 +89,8 @@ TeamSpeakClient.prototype = {
             args.forEach(function(v) {
                 var equalsPos = v.indexOf("=");
                 if (equalsPos > -1){
-                    var key = self.tsunescape(v.substr(0, equalsPos));
-                    var value = self.tsunescape(v.substr(equalsPos + 1));
+                    var key = tsunescape(v.substr(0, equalsPos));
+                    var value = tsunescape(v.substr(equalsPos + 1));
                     if (parseInt(value, 10) == value) {
                         value = parseInt(value, 10);
                     }
@@ -109,57 +109,18 @@ TeamSpeakClient.prototype = {
         }
 
         return response;
-    },
+    };
 
-    // Return pending commands that are going to be sent to the server.
-    // Note that they have been parsed - Access getPending()[0].text to get
-    // the full text representation of the command.
-    getPending: function() {
-        return this.queue.slice(0);
-    },
 
-    // Clear the queue of pending commands so that any command that is currently queued won't be executed.
-    // The old queue is returned.
-    clearPending: function() {
-        var q = this.queue;
-        this.queue = [];
-        return q;
-    },
-
-    // Send a command to the server
-    send: function(cmd, cmdParams, cmdOptions, callback, params) {
-        var tosend = this.tsescape(cmd);
-        cmdOptions.forEach(function(v) {
-            tosend += " -" + self.tsescape(v);
-        });
-        for (var k in cmdParams) {
-            var v = cmdParams[k];
-            if (util.isArray(v)) {
-                // Multiple values for the same key - concatenate all
-                var doptions = v.map(function(val) {
-                    return self.tsescape(k) + "=" + self.tsescape(val);
-                });
-                tosend += " " + doptions.join("|");
-            } else if (v !== null) {
-                tosend += " " + this.tsescape(k.toString()) + "=" + this.tsescape(v.toString());
-            }
-        }
-        this.queue.push({cmd: cmd, options: cmdOptions, parameters: cmdParams, text: tosend, cb: callback, cbparams: params});
-        if (this.status === 0) {
-            this.checkQueue();
-        }
-    },
-
-    processResponse: function() {
-        var self = this;
-        this.reader = LineInputStream(self.socket);
-        this.reader.on("line", function(line) {
+    function processResponse() {
+        reader = LineInputStream(socket);
+        reader.on("line", function(line) {
             var s = line.trim();
             // Ignore two first lines sent by server ("TS3" and information message)
-            if (self.status < 0) {
-                self.status++;
-                if (self.status === 0) {
-                    self.checkQueue();
+            if (status < 0) {
+                status++;
+                if (status === 0) {
+                    checkQueue();
                 }
                 return;
             }
@@ -168,28 +129,81 @@ TeamSpeakClient.prototype = {
             // - "error id=XX msg=YY". ID is zero if command was executed successfully.
             var response = undefined;
             if (s.indexOf("error") === 0) {
-                response = self.parseResponse.call(self, s.substr("error ".length).trim());
-                self.executing.error = response;
-                if (self.executing.error.id === "0") {
-                    delete self.executing.error;
+                response = parseResponse(s.substr("error ".length).trim());
+                executing.error = response;
+                if (executing.error.id === "0") {
+                    delete executing.error;
                 }
-                if (self.executing.cb) {
-                    self.executing.cb.call(self.executing, self.executing.error, self.executing.response, self.executing.rawResponse, self.executing.cbparams);
+                if (executing.cb) {
+                    executing.cb.call(executing, executing.error, executing.response, executing.rawResponse);
                 }
-                self.executing = null;
-                self.checkQueue();
+                executing = null;
+                checkQueue();
             } else if (s.indexOf("notify") === 0) {
                 s = s.substr("notify".length);
-                response = self.parseResponse.call(self, s);
+                response = parseResponse(s);
                 self.emit(s.substr(0, s.indexOf(" ")), response);
-            } else if (self.executing) {
-                response = self.parseResponse.call(self, s);
-                self.executing.rawResponse = s;
-                self.executing.response = response;
+            } else if (executing) {
+                response = parseResponse(s);
+                executing.rawResponse = s;
+                executing.response = response;
             }
-            self.emit("connect");
         });
-    }
+        self.emit("connect");
+    };
+
+
+    // Public methods - declared as members of "this"
+
+    // Send a command to the server
+    this.send = function(cmd, cmdParams, cmdOptions, callback) {
+        var tosend = tsescape(cmd);
+        cmdOptions.forEach(function(v) {
+            tosend += " -" + tsescape(v);
+        });
+        for (var k in cmdParams) {
+            var v = cmdParams[k];
+            if (util.isArray(v)) {
+                // Multiple values for the same key - concatenate all
+                var doptions = v.map(function(val) {
+                    return tsescape(k) + "=" + tsescape(val);
+                });
+                tosend += " " + doptions.join("|");
+            } else if (v !== null) {
+                tosend += " " + tsescape(k.toString()) + "=" + tsescape(v.toString());
+            }
+        }
+        queue.push({cmd: cmd, options: cmdOptions, parameters: cmdParams, text: tosend, cb: callback});
+        if (status === 0) {
+            checkQueue();
+        }
+    };
+
+
+    // Return pending commands that are going to be sent to the server.
+    // Note that they have been parsed - Access getPending()[0].text to get
+    // the full text representation of the command.
+    this.getPending = function() {
+        return queue.slice(0);
+    };
+
+
+    // Clear the queue of pending commands so that any command that is currently queued won't be executed.
+    // The old queue is returned.
+    this.clearPending = function() {
+        var q = this.queue;
+        this.queue = [];
+        return q;
+    };
+
+    this.setKeepAlive = function(enable, initialDelay) {
+        socket.setKeepAlive(enable, initialDelay);
+    };
+
+    init();
+
 };
 
-extendPrototype(TeamSpeakClient, events.EventEmitter);
+util.inherits(TeamSpeakClient, events.EventEmitter);
+module.exports = TeamSpeakClient;
+
